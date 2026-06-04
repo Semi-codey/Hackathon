@@ -9,6 +9,33 @@ import { api } from "../../lib/mockData";
 import { sinasAgent } from "../../lib/sinasAgent";
 import { toast } from "sonner";
 
+const PLAN_CACHE_PREFIX = "gymtracker_plan_page_v1";
+
+function getPlanCacheKey() {
+  return `${PLAN_CACHE_PREFIX}:${sinasAgent.getActiveUserId()}`;
+}
+
+function loadPlanFromCache(): WorkoutSession[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(getPlanCacheKey());
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as WorkoutSession[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePlanToCache(sessions: WorkoutSession[]) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(getPlanCacheKey(), JSON.stringify(sessions));
+  } catch {
+    // Ignore cache write failures
+  }
+}
+
 export function WorkoutPlan() {
   const [sessions, setSessions] = useState<WorkoutSession[]>([]);
   const [loading, setLoading] = useState(true);
@@ -20,6 +47,11 @@ export function WorkoutPlan() {
   };
 
   useEffect(() => {
+    const cached = loadPlanFromCache();
+    if (cached.length > 0) {
+      setSessions(cached);
+      setLoading(false);
+    }
     loadSessions();
   }, []);
 
@@ -27,11 +59,25 @@ export function WorkoutPlan() {
     try {
       setLoading(true);
       const data = await api.getWorkoutSessions();
-      setSessions(data);
+      if (data.length > 0) {
+        setSessions(data);
+        savePlanToCache(data);
+      } else {
+        const cached = loadPlanFromCache();
+        if (cached.length > 0) {
+          setSessions(cached);
+        }
+      }
     } catch (error) {
       console.error("loadSessions failed", error);
-      toast.error("Kon schema niet ophalen van SINAS");
-      setSessions([]);
+      const cached = loadPlanFromCache();
+      if (cached.length > 0) {
+        setSessions(cached);
+        toast.info("Toon laatst opgeslagen schema");
+      } else {
+        toast.error("Kon schema niet ophalen van SINAS");
+        setSessions((prev) => prev);
+      }
     } finally {
       setLoading(false);
       refreshDebugInfo();
@@ -51,6 +97,7 @@ export function WorkoutPlan() {
 
       const data = await api.generateWorkoutPlan({ goal });
       setSessions(data);
+      savePlanToCache(data);
       toast.success("Nieuw schema gegenereerd");
     } catch (error) {
       toast.error("Schema genereren mislukt");
@@ -288,7 +335,7 @@ export function WorkoutPlan() {
                 </div>
 
                 {/* Action */}
-                <Link to={`/workout/${session.id}`}>
+                <Link to={`/workout/${session.id}`} state={{ session }}>
                   <Button
                     className={`w-full ${
                       isToday

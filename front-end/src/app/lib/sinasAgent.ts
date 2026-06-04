@@ -18,6 +18,11 @@ const SINAS_AGENT_NAME =
 type AgentTask =
   | "get_workout_sessions"
   | "update_workout_set"
+  | "update_workout_status"
+  | "complete_workout_session"
+  | "finish_workout_session"
+  | "save_workout_sessions"
+  | "upsert_workout_sessions"
   | "get_user_profile"
   | "update_user_profile"
   | "submit_daily_check_in"
@@ -390,6 +395,16 @@ async function runAgentViaRuntimeChat(input: AgentRunInput): Promise<unknown> {
             }
           : undefined,
     },
+    task_policy:
+      input.task === "get_workout_sessions"
+        ? {
+            mode: "read-only",
+            never_generate: true,
+            never_regenerate: true,
+            instruction:
+              "Only read existing workout rows for this user. If none exist, return an empty sessions array and do not create any new workout plan.",
+          }
+        : undefined,
   };
 
   const message = asRecord(
@@ -800,6 +815,45 @@ function parseRepsValue(value: unknown, fallback = 8) {
   return fallback;
 }
 
+function extractSetNumberFromId(setId: string) {
+  const match = String(setId).match(/(\d+)$/);
+  if (!match) return undefined;
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function toPersistableWorkouts(sessions: WorkoutSession[]) {
+  return sessions.map((session) => ({
+    workout_id: session.id,
+    user_id: getActiveUserId(),
+    name: session.name,
+    planned_date: session.date,
+    duration: session.duration,
+    status: session.completed ? "completed" : "planned",
+    workout_exercises: session.exercises.map((exercise, exerciseIndex) => ({
+      workout_exercise_id: exercise.id,
+      workout_id: session.id,
+      exercise_id: exercise.exercise.id,
+      order_number: exercise.order || exerciseIndex + 1,
+      target_sets: exercise.sets.length,
+      target_reps: exercise.sets[0]?.reps,
+      target_weight: exercise.sets[0]?.weight,
+      rest_interval: exercise.restTime,
+      setlog: exercise.sets
+        .filter((set) => set.completed)
+        .map((set, setIndex) => ({
+          setlog_id: set.id,
+          set_number: setIndex + 1,
+          reps: set.reps,
+          weight: set.weight,
+          intensity: set.difficulty,
+          executed_at: new Date().toISOString(),
+          notes: set.notes,
+        })),
+    })),
+  }));
+}
+
 function mapUiGoalToAgentGoal(goal: UserProfile["goal"] | undefined):
   | "strength"
   | "hypertrophy"
@@ -1191,6 +1245,9 @@ export const sinasAgent = {
         schema: "public",
         tables: ["workout", "workout_exercise", "setlog", "exercise"],
         user_id: getActiveUserId(),
+        read_only: true,
+        allow_generate: false,
+        regenerate: false,
       },
     });
 
@@ -1203,23 +1260,18 @@ export const sinasAgent = {
     const existingSessions = normalizeSessionsFromPayload(result);
     const schemaOnly = isSchemaOnlyPayload(result);
 
-    // If DB connections are not allowed for this agent, fall back to direct generation.
+    // Important: reading schedules should be idempotent.
+    // Do NOT auto-regenerate here; generation only happens from explicit user action.
     if (status === "error" && errorCode === "CONNECTION_NOT_ALLOWED") {
-      return await sinasAgent.generateWorkoutPlan({ goal: "strength" });
+      return [];
     }
 
-    // If there is no user data yet, proactively generate a starter plan.
-    if (
-      (workoutPlanStatus === "no_data" || status === "no_data") &&
-      existingSessions.length === 0
-    ) {
-      return await sinasAgent.generateWorkoutPlan({ goal: "strength" });
+    if ((workoutPlanStatus === "no_data" || status === "no_data") && existingSessions.length === 0) {
+      return [];
     }
 
-    // Some runtime answers contain only schema introspection instead of real rows.
-    // In that case, generate a usable starter plan for the current app user.
-    if (schemaOnly || existingSessions.length === 0) {
-      return await sinasAgent.generateWorkoutPlan({ goal: "strength" });
+    if (schemaOnly) {
+      return [];
     }
 
     return existingSessions;
@@ -1227,6 +1279,13 @@ export const sinasAgent = {
 
   generateWorkoutPlan: async (options?: {
     goal?: UserProfile["goal"];
+    workoutHistory?: Array<{
+      exercise: string;
+      sets?: number;
+      reps?: number;
+      weight?: number;
+    }>;
+    preferredExercises?: string[];
     requestId?: string;
   }): Promise<WorkoutSession[]> => {
     const agentGoal = mapUiGoalToAgentGoal(options?.goal);
@@ -1239,8 +1298,8 @@ export const sinasAgent = {
       user_goal: agentGoal,
       available_time_minutes: 60,
       equipment: ["barbell", "dumbbell", "bodyweight"],
-      preferred_exercises: [],
-      workout_history: [],
+      preferred_exercises: options?.preferredExercises ?? [],
+      workout_history: options?.workoutHistory ?? [],
       recovery: {
         sleep: 7,
         stress: 5,
@@ -1271,6 +1330,31 @@ export const sinasAgent = {
         });
         const sessions = normalizeSessionsFromPayload(result);
         if (sessions.length > 0) {
+          // Best effort: persist generated workouts for this app-account user.
+          try {
+            const workouts = toPersistableWorkouts(sessions);
+            const persistTasks: AgentTask[] = ["save_workout_sessions", "upsert_workout_sessions"];
+            for (const persistTask of persistTasks) {
+              try {
+                await runAgentRequest({
+                  task: persistTask,
+                  input: {
+                    schema: "public",
+                    tables: ["workout", "workout_exercise", "setlog"],
+                    user_id: getActiveUserId(),
+                    workouts,
+                    source_task: task,
+                    request_id: generationInput.request_id,
+                  },
+                });
+                break;
+              } catch {
+                // try next alias
+              }
+            }
+          } catch {
+            // Keep UX responsive even when persistence alias is not implemented in agent.
+          }
           return sessions;
         }
       } catch {
@@ -1297,18 +1381,62 @@ export const sinasAgent = {
     setId: string,
     data: unknown,
   ) => {
+    const payload = asRecord(data);
+    const completed = Boolean(payload.completed);
+    const difficulty = asDifficulty(payload.difficulty);
+    const reps = payload.reps === undefined ? undefined : Math.max(1, Math.round(asNumber(payload.reps, 1)));
+    const weight = payload.weight === undefined ? undefined : Math.max(0, asNumber(payload.weight, 0));
+
     const result = await runAgentRequest({
       task: "update_workout_set",
       input: {
         schema: "public",
         table: "setlog",
+        user_id: getActiveUserId(),
         workout_id: sessionId,
         workout_exercise_id: exerciseId,
         setlog_id: setId,
-        ...((data as object) ?? {}),
+        set_number: extractSetNumberFromId(setId),
+        reps,
+        weight,
+        intensity: difficulty,
+        completed,
+        executed_at: completed ? new Date().toISOString() : undefined,
+        ...payload,
       },
     });
     return { success: true, data: extractUsefulPayload(result) };
+  },
+
+  updateWorkoutStatus: async (sessionId: string, completed: boolean) => {
+    const tasks: AgentTask[] = [
+      "update_workout_status",
+      "complete_workout_session",
+      "finish_workout_session",
+    ];
+
+    let lastError: unknown = null;
+    for (const task of tasks) {
+      try {
+        const result = await runAgentRequest({
+          task,
+          input: {
+            schema: "public",
+            table: "workout",
+            user_id: getActiveUserId(),
+            workout_id: sessionId,
+            status: completed ? "completed" : "planned",
+            completed,
+            completed_at: completed ? new Date().toISOString() : undefined,
+          },
+        });
+        return { success: true, data: extractUsefulPayload(result) };
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw new Error(`Could not persist workout status: ${String(lastError)}`);
   },
 
   getUserProfile: async (): Promise<UserProfile | null> => {

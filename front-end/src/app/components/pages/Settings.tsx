@@ -7,15 +7,23 @@ import { Badge } from '../ui/badge';
 import { Calendar, Smartphone, Target, Bell, ExternalLink } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Input } from '../ui/input';
-import { api } from '../../lib/mockData';
+import { api, exercises } from '../../lib/mockData';
 import { toast } from 'sonner';
 import { useAuth } from '../../providers/AuthProvider';
+import type { ExerciseBaseline } from '../../types/workout';
+
+type BaselineInput = {
+  sets: string;
+  reps: string;
+  weight: string;
+};
 
 export function Settings() {
   const [googleCalendar, setGoogleCalendar] = useState(false);
   const [autoSchedule, setAutoSchedule] = useState(true);
   const [goal, setGoal] = useState('strength');
   const [notifications, setNotifications] = useState(true);
+  const [baselineInputs, setBaselineInputs] = useState<Record<string, BaselineInput>>({});
   const { email, userId } = useAuth();
 
   useEffect(() => {
@@ -24,6 +32,17 @@ export function Settings() {
         const profile = await api.getUserProfile();
         setGoal(profile.goal);
         setAutoSchedule(Boolean(profile.preferences.preferredTime));
+
+        const baselines = await api.getExerciseBaselines();
+        const baselineMap: Record<string, BaselineInput> = {};
+        baselines.forEach((item) => {
+          baselineMap[item.exerciseId] = {
+            sets: item.sets ? String(item.sets) : '',
+            reps: item.reps ? String(item.reps) : '',
+            weight: item.weight ? String(item.weight) : '',
+          };
+        });
+        setBaselineInputs(baselineMap);
       } catch (error) {
         console.error("loadProfile failed", error);
         toast.error('Kon profiel niet ophalen van SINAS');
@@ -73,12 +92,33 @@ export function Settings() {
 
   const handleSaveSettings = async () => {
     try {
+      const toPositiveNumber = (value: string) => {
+        const trimmed = value.trim();
+        if (!trimmed) return undefined;
+        const parsed = Number(trimmed);
+        if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+        return parsed;
+      };
+
+      const baselines: ExerciseBaseline[] = exercises.map((exercise) => {
+        const input = baselineInputs[exercise.id] ?? { sets: '', reps: '', weight: '' };
+        return {
+          exerciseId: exercise.id,
+          exerciseName: exercise.name,
+          sets: toPositiveNumber(input.sets),
+          reps: toPositiveNumber(input.reps),
+          weight: toPositiveNumber(input.weight),
+          updatedAt: new Date().toISOString(),
+        };
+      });
+
       await api.updateUserProfile({
         goal: goal as 'strength' | 'hypertrophy' | 'endurance' | 'crossfit' | 'powerlifting',
         preferences: {
           preferredTime: autoSchedule ? '18:00' : undefined,
         },
       });
+      await api.updateExerciseBaselines(baselines);
       toast.success('Instellingen opgeslagen en gekoppeld aan account');
     } catch (error) {
       console.error("handleSaveSettings failed", error);
@@ -162,6 +202,73 @@ export function Settings() {
               <strong className="text-white">Wetenschappelijke basis:</strong> Het schema gebruikt evidence-based methoden zoals periodisering, progressive overload en optimale volume landmarks per spiergroep.
             </p>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card className="bg-slate-800/50 border-slate-700">
+        <CardHeader>
+          <CardTitle className="text-white">Startniveau per oefening</CardTitle>
+          <CardDescription className="text-slate-400">
+            Vul je huidige sets/reps/gewicht in, of laat leeg als beginner.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {exercises.map((exercise) => {
+            const values = baselineInputs[exercise.id] ?? { sets: '', reps: '', weight: '' };
+            return (
+              <div key={exercise.id} className="grid grid-cols-1 md:grid-cols-4 gap-3 p-3 bg-slate-900/50 rounded-lg">
+                <div>
+                  <p className="text-white text-sm font-medium">{exercise.name}</p>
+                  <p className="text-xs text-slate-400">{exercise.muscleGroup}</p>
+                </div>
+                <Input
+                  inputMode="numeric"
+                  value={values.sets}
+                  onChange={(e) =>
+                    setBaselineInputs((prev) => ({
+                      ...prev,
+                      [exercise.id]: {
+                        ...values,
+                        sets: e.target.value,
+                      },
+                    }))
+                  }
+                  placeholder="Sets"
+                  className="bg-slate-900 border-slate-700 text-white"
+                />
+                <Input
+                  inputMode="numeric"
+                  value={values.reps}
+                  onChange={(e) =>
+                    setBaselineInputs((prev) => ({
+                      ...prev,
+                      [exercise.id]: {
+                        ...values,
+                        reps: e.target.value,
+                      },
+                    }))
+                  }
+                  placeholder="Reps"
+                  className="bg-slate-900 border-slate-700 text-white"
+                />
+                <Input
+                  inputMode="decimal"
+                  value={values.weight}
+                  onChange={(e) =>
+                    setBaselineInputs((prev) => ({
+                      ...prev,
+                      [exercise.id]: {
+                        ...values,
+                        weight: e.target.value,
+                      },
+                    }))
+                  }
+                  placeholder="Gewicht (kg)"
+                  className="bg-slate-900 border-slate-700 text-white"
+                />
+              </div>
+            );
+          })}
         </CardContent>
       </Card>
 

@@ -163,7 +163,7 @@ export function Dashboard() {
                 </div>
               ))}
             </div>
-            <Link to={`/workout/${todayWorkout.id}`}>
+            <Link to={`/workout/${todayWorkout.id}`} state={{ session: todayWorkout }}>
               <Button className="w-full bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white">
                 Start Training
               </Button>

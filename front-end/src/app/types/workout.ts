@@ -49,6 +49,15 @@ export interface UserProfile {
   };
 }
 
+export interface ExerciseBaseline {
+  exerciseId: string;
+  exerciseName: string;
+  sets?: number;
+  reps?: number;
+  weight?: number;
+  updatedAt: string;
+}
+
 export interface SleepData {
   date: string;
   hours: number;

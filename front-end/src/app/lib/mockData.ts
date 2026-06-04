@@ -1,5 +1,6 @@
 import type {
   Exercise,
+  ExerciseBaseline,
   ProgressInsights,
   WorkoutSession,
   UserProfile,
@@ -160,6 +161,115 @@ let cachedProgressInsights: ProgressInsights = {
   sleepInsight: undefined,
 };
 
+const WORKOUT_CACHE_KEY_PREFIX = "gymtracker_workout_sessions_v1";
+const BASELINE_CACHE_KEY_PREFIX = "gymtracker_exercise_baselines_v1";
+const DEFAULT_ENV_USER_ID =
+  (import.meta.env.VITE_SINAS_USER_ID as string | undefined)?.trim() || "demo-user";
+
+function readSessionsFromKey(key: string): WorkoutSession[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as WorkoutSession[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function getWorkoutCacheKey() {
+  return `${WORKOUT_CACHE_KEY_PREFIX}:${sinasAgent.getActiveUserId()}`;
+}
+
+function getBaselineCacheKey() {
+  return `${BASELINE_CACHE_KEY_PREFIX}:${sinasAgent.getActiveUserId()}`;
+}
+
+function saveWorkoutSessionsToLocalCache(sessions: WorkoutSession[]) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(getWorkoutCacheKey(), JSON.stringify(sessions));
+  } catch {
+    // Ignore storage failures
+  }
+}
+
+function loadWorkoutSessionsFromLocalCache(): WorkoutSession[] {
+  const primary = readSessionsFromKey(getWorkoutCacheKey());
+  if (primary.length > 0) return primary;
+
+  // Fallbacks for older cache keys and earlier account-id mappings.
+  const envUserKey = `${WORKOUT_CACHE_KEY_PREFIX}:${DEFAULT_ENV_USER_ID}`;
+  const legacyUnscopedKey = WORKOUT_CACHE_KEY_PREFIX;
+
+  const envUserCached = readSessionsFromKey(envUserKey);
+  if (envUserCached.length > 0) return envUserCached;
+
+  return readSessionsFromKey(legacyUnscopedKey);
+}
+
+function sanitizeBaseline(value: ExerciseBaseline): ExerciseBaseline {
+  const cleanNumber = (num: unknown) => {
+    if (typeof num !== "number" || !Number.isFinite(num)) return undefined;
+    if (num <= 0) return undefined;
+    return Math.round(num * 100) / 100;
+  };
+
+  return {
+    exerciseId: value.exerciseId,
+    exerciseName: value.exerciseName,
+    sets: cleanNumber(value.sets),
+    reps: cleanNumber(value.reps),
+    weight: cleanNumber(value.weight),
+    updatedAt: value.updatedAt || new Date().toISOString(),
+  };
+}
+
+function loadExerciseBaselinesFromLocalCache(): ExerciseBaseline[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(getBaselineCacheKey());
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as ExerciseBaseline[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((entry) => sanitizeBaseline(entry))
+      .filter((entry) => entry.sets || entry.reps || entry.weight);
+  } catch {
+    return [];
+  }
+}
+
+function saveExerciseBaselinesToLocalCache(items: ExerciseBaseline[]) {
+  if (typeof window === "undefined") return;
+  try {
+    const sanitized = items
+      .map((entry) => sanitizeBaseline(entry))
+      .filter((entry) => entry.sets || entry.reps || entry.weight);
+    window.localStorage.setItem(getBaselineCacheKey(), JSON.stringify(sanitized));
+  } catch {
+    // Ignore storage failures
+  }
+}
+
+function preferExistingSessionsWhenEmpty(incoming: WorkoutSession[]) {
+  if (incoming.length > 0) return incoming;
+  if (cachedSessions.length > 0) return cachedSessions;
+
+  const persisted = loadWorkoutSessionsFromLocalCache();
+  if (persisted.length > 0) return persisted;
+
+  return incoming;
+}
+
+function syncSessionCaches(sessions: WorkoutSession[]) {
+  cachedSessions = sessions;
+  if (sessions.length > 0) {
+    saveWorkoutSessionsToLocalCache(sessions);
+  }
+}
+
 function ensureSinasConfigured() {
   if (!sinasAgent.isConfigured()) {
     throw new Error("SINAS is not configured. Set VITE_SINAS_BASE_URL and VITE_SINAS_API_KEY.");
@@ -185,10 +295,16 @@ export const api = {
     ensureSinasConfigured();
     try {
       const sessions = await sinasAgent.getWorkoutSessions();
-      cachedSessions = sessions;
+      const stableSessions = preferExistingSessionsWhenEmpty(sessions);
+      syncSessionCaches(stableSessions);
       return cachedSessions;
     } catch (error) {
       console.warn("SINAS getWorkoutSessions failed", error);
+      const stableSessions = preferExistingSessionsWhenEmpty([]);
+      if (stableSessions.length > 0) {
+        syncSessionCaches(stableSessions);
+        return stableSessions;
+      }
       throw error;
     }
   },
@@ -197,10 +313,18 @@ export const api = {
     ensureSinasConfigured();
     const desiredGoal = options?.goal ?? cachedProfile.goal;
     const previousSignature = sessionSignature(cachedSessions);
+    const baselines = loadExerciseBaselinesFromLocalCache();
 
     try {
       const sessions = await sinasAgent.generateWorkoutPlan({
         goal: desiredGoal,
+        workoutHistory: baselines.map((item) => ({
+          exercise: item.exerciseName,
+          sets: item.sets,
+          reps: item.reps,
+          weight: item.weight,
+        })),
+        preferredExercises: baselines.map((item) => item.exerciseName),
         requestId: `regen-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       });
       if (!sessions.length) {
@@ -212,6 +336,7 @@ export const api = {
         console.warn("SINAS returned unchanged schedule on regeneration request");
       }
       cachedSessions = sessions;
+      saveWorkoutSessionsToLocalCache(cachedSessions);
       return cachedSessions;
     } catch (error) {
       console.warn("SINAS generateWorkoutPlan failed", error);
@@ -248,9 +373,34 @@ export const api = {
     });
 
     try {
-      return await sinasAgent.updateWorkoutSet(sessionId, exerciseId, setId, data);
+      const response = await sinasAgent.updateWorkoutSet(sessionId, exerciseId, setId, data);
+      saveWorkoutSessionsToLocalCache(cachedSessions);
+      return response;
     } catch (error) {
       console.warn("SINAS updateWorkoutSet failed", error);
+      saveWorkoutSessionsToLocalCache(cachedSessions);
+      throw error;
+    }
+  },
+
+  updateWorkoutStatus: async (sessionId: string, completed: boolean) => {
+    ensureSinasConfigured();
+    cachedSessions = cachedSessions.map((session) =>
+      session.id === sessionId
+        ? {
+            ...session,
+            completed,
+          }
+        : session,
+    );
+
+    try {
+      const response = await sinasAgent.updateWorkoutStatus(sessionId, completed);
+      saveWorkoutSessionsToLocalCache(cachedSessions);
+      return response;
+    } catch (error) {
+      console.warn("SINAS updateWorkoutStatus failed", error);
+      saveWorkoutSessionsToLocalCache(cachedSessions);
       throw error;
     }
   },
@@ -286,6 +436,15 @@ export const api = {
       console.warn("SINAS updateUserProfile failed", error);
       throw error;
     }
+  },
+
+  getExerciseBaselines: async (): Promise<ExerciseBaseline[]> => {
+    return loadExerciseBaselinesFromLocalCache();
+  },
+
+  updateExerciseBaselines: async (items: ExerciseBaseline[]) => {
+    saveExerciseBaselinesToLocalCache(items);
+    return { success: true };
   },
 
   // Daily check-in
