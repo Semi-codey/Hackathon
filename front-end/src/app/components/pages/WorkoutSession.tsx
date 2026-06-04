@@ -6,7 +6,7 @@ import { Badge } from "../ui/badge";
 import { Progress } from "../ui/progress";
 import { ArrowLeft, Check, Timer, AlertCircle } from "lucide-react";
 import type { WorkoutSession as WorkoutSessionType } from "../../types/workout";
-import { api, mockWorkoutSessions } from "../../lib/mockData";
+import { api } from "../../lib/mockData";
 import { toast } from "sonner";
 
 export function WorkoutSession() {
@@ -17,10 +17,20 @@ export function WorkoutSession() {
   const [restTimer, setRestTimer] = useState(0);
 
   useEffect(() => {
-    const found = mockWorkoutSessions.find((s) => s.id === id);
-    if (found) {
-      setSession(found);
-    }
+    const loadSession = async () => {
+      try {
+        const sessions = await api.getWorkoutSessions();
+        const found = sessions.find((s) => s.id === id);
+        if (found) {
+          setSession(found);
+        }
+      } catch (error) {
+        console.error("loadSession failed", error);
+        toast.error("Kon training niet laden van SINAS");
+      }
+    };
+
+    loadSession();
   }, [id]);
 
   useEffect(() => {
@@ -40,6 +50,27 @@ export function WorkoutSession() {
     );
   }
 
+  if (!session.exercises.length) {
+    return (
+      <div className="space-y-6 pb-20">
+        <div className="flex items-center gap-4">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => navigate(-1)}
+            className="text-slate-400 hover:text-white"
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </Button>
+          <div className="flex-1">
+            <h2 className="text-2xl font-bold text-white">{session.name}</h2>
+            <p className="text-sm text-slate-400">Geen oefeningen gevonden</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const currentExercise = session.exercises[activeExerciseIndex];
   const completedSets = currentExercise.sets.filter((s) => s.completed).length;
   const totalSets = currentExercise.sets.length;
@@ -50,6 +81,7 @@ export function WorkoutSession() {
     difficulty: 1 | 2 | 3 | 4 | 5,
   ) => {
     const setIndex = currentExercise.sets.findIndex((s) => s.id === setId);
+    if (setIndex < 0) return;
     const updatedSets = [...currentExercise.sets];
     updatedSets[setIndex] = {
       ...updatedSets[setIndex],
@@ -68,10 +100,15 @@ export function WorkoutSession() {
       exercises: updatedExercises,
     });
 
-    await api.updateWorkoutSet(session.id, currentExercise.id, setId, {
-      completed: true,
-      difficulty,
-    });
+    try {
+      await api.updateWorkoutSet(session.id, currentExercise.id, setId, {
+        completed: true,
+        difficulty,
+      });
+    } catch (error) {
+      console.error("updateWorkoutSet failed", error);
+      toast.error("Set kon niet worden opgeslagen in SINAS");
+    }
 
     toast.success(`Set ${setIndex + 1} voltooid!`);
 

@@ -13,6 +13,7 @@ import { Progress } from "../ui/progress";
 import { Calendar, TrendingUp, Flame, Target, Clock, Moon } from "lucide-react";
 import { api } from "../../lib/mockData";
 import type { WorkoutSession } from "../../types/workout";
+import { toast } from "sonner";
 
 export function Dashboard() {
   const [todayWorkout, setTodayWorkout] = useState<WorkoutSession | null>(null);
@@ -20,13 +21,18 @@ export function Dashboard() {
 
   useEffect(() => {
     const loadData = async () => {
-      const sessions = await api.getWorkoutSessions();
-      const today = new Date().toISOString().split("T")[0];
-      const todaySession = sessions.find((s) => s.date === today);
-      setTodayWorkout(todaySession || null);
+      try {
+        const sessions = await api.getWorkoutSessions();
+        const today = new Date().toISOString().split("T")[0];
+        const todaySession = sessions.find((s) => s.date === today);
+        setTodayWorkout(todaySession || null);
 
-      // Bereken week progress (mock)
-      setWeekProgress(60);
+        // Bereken week progress (mock)
+        setWeekProgress(60);
+      } catch (error) {
+        console.error("Dashboard loadData failed", error);
+        toast.error("Kon trainingsdata niet laden van SINAS");
+      }
     };
 
     loadData();
@@ -133,18 +139,27 @@ export function Dashboard() {
                   key={ex.id}
                   className="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg"
                 >
+                  {(() => {
+                    const firstSet = ex.sets[0];
+                    const reps = firstSet?.reps ?? "-";
+                    const weight = firstSet?.weight ?? 0;
+                    return (
+                      <>
                   <div>
                     <p className="text-white font-medium">{ex.exercise.name}</p>
                     <p className="text-sm text-slate-400">
-                      {ex.sets.length} sets × {ex.sets[0].reps} reps
+                      {ex.sets.length} sets × {reps} reps
                     </p>
                   </div>
                   <Badge
                     variant="outline"
                     className="border-slate-600 text-slate-300"
                   >
-                    {ex.sets[0].weight}kg
+                    {weight}kg
                   </Badge>
+                      </>
+                    );
+                  })()}
                 </div>
               ))}
             </div>

@@ -1,45 +1,67 @@
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
-import { TrendingUp, Award, Zap, Moon } from 'lucide-react';
-import { Badge } from '../ui/badge';
+import { useEffect, useMemo, useState } from "react";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+} from "recharts";
+import { TrendingUp, Award, Zap, Moon } from "lucide-react";
+import { Badge } from "../ui/badge";
+import { api } from "../../lib/mockData";
+import type { ProgressInsights } from "../../types/workout";
+import { toast } from "sonner";
+
+const emptyInsights: ProgressInsights = {
+  strengthData: [],
+  volumeData: [],
+  sleepData: [],
+  achievements: [],
+  personalRecords: [],
+};
 
 export function Progress() {
-  // Mock data voor charts
-  const strengthData = [
-    { week: 'Week 1', squat: 80, bench: 60, deadlift: 100 },
-    { week: 'Week 2', squat: 85, bench: 62.5, deadlift: 105 },
-    { week: 'Week 3', squat: 87.5, bench: 65, deadlift: 107.5 },
-    { week: 'Week 4', squat: 90, bench: 67.5, deadlift: 110 },
-    { week: 'Week 5', squat: 92.5, bench: 70, deadlift: 115 },
-    { week: 'Week 6', squat: 95, bench: 72.5, deadlift: 117.5 },
-  ];
+  const [insights, setInsights] = useState<ProgressInsights>(emptyInsights);
 
-  const volumeData = [
-    { day: 'Ma', volume: 4500 },
-    { day: 'Di', volume: 0 },
-    { day: 'Wo', volume: 5200 },
-    { day: 'Do', volume: 0 },
-    { day: 'Vr', volume: 4800 },
-    { day: 'Za', volume: 3200 },
-    { day: 'Zo', volume: 0 },
-  ];
+  useEffect(() => {
+    const loadInsights = async () => {
+      try {
+        const result = await api.getProgressInsights();
+        setInsights(result);
+      } catch (error) {
+        console.error("loadInsights failed", error);
+        toast.error("Kon voortgang niet laden van SINAS");
+      }
+    };
+    loadInsights();
+  }, []);
 
-  const sleepData = [
-    { date: '1/6', hours: 7.5 },
-    { date: '2/6', hours: 6.8 },
-    { date: '3/6', hours: 7.2 },
-    { date: '4/6', hours: 8.0 },
-    { date: '5/6', hours: 7.0 },
-    { date: '6/6', hours: 7.5 },
-    { date: '7/6', hours: 6.5 },
-  ];
-
-  const achievements = [
-    { title: 'Week Warrior', description: '7 dagen op rij getraind', icon: Award, color: 'text-yellow-400' },
-    { title: 'Power Lifter', description: '100kg deadlift bereikt', icon: Zap, color: 'text-blue-400' },
-    { title: 'Consistent', description: '30 dagen consecutive check-ins', icon: TrendingUp, color: 'text-green-400' },
-  ];
+  const achievements = useMemo(
+    () =>
+      insights.achievements.slice(0, 3).map((item, index) => {
+        const icon =
+          item.color === "yellow" ? Award : item.color === "blue" ? Zap : TrendingUp;
+        const color =
+          item.color === "yellow"
+            ? "text-yellow-400"
+            : item.color === "blue"
+              ? "text-blue-400"
+              : "text-green-400";
+        return {
+          title: item.title || `Achievement ${index + 1}`,
+          description: item.description || "Nieuwe milestone bereikt",
+          icon,
+          color,
+        };
+      }),
+    [insights.achievements],
+  );
 
   return (
     <div className="space-y-6 pb-20">
@@ -99,7 +121,7 @@ export function Progress() {
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={strengthData}>
+                <LineChart data={insights.strengthData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                   <XAxis dataKey="week" stroke="#94a3b8" />
                   <YAxis stroke="#94a3b8" />
@@ -144,7 +166,7 @@ export function Progress() {
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={volumeData}>
+                <BarChart data={insights.volumeData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                   <XAxis dataKey="day" stroke="#94a3b8" />
                   <YAxis stroke="#94a3b8" />
@@ -176,7 +198,7 @@ export function Progress() {
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={sleepData}>
+                <LineChart data={insights.sleepData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                   <XAxis dataKey="date" stroke="#94a3b8" />
                   <YAxis stroke="#94a3b8" domain={[5, 9]} />
@@ -193,7 +215,9 @@ export function Progress() {
               </ResponsiveContainer>
               <div className="mt-4 p-4 bg-blue-900/20 rounded-lg border border-blue-700/50">
                 <p className="text-sm text-slate-300">
-                  <strong className="text-white">Inzicht:</strong> Je presteert 12% beter bij 7.5+ uur slaap. Probeer consistent te slapen voor optimale resultaten.
+                  <strong className="text-white">Inzicht:</strong>{" "}
+                  {insights.sleepInsight ||
+                    "Je slaapdata wordt geanalyseerd voor gepersonaliseerde hersteladviezen."}
                 </p>
               </div>
             </CardContent>
@@ -208,12 +232,7 @@ export function Progress() {
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {[
-              { exercise: 'Squat', weight: 95, unit: 'kg' },
-              { exercise: 'Bench Press', weight: 72.5, unit: 'kg' },
-              { exercise: 'Deadlift', weight: 117.5, unit: 'kg' },
-              { exercise: 'Pull-ups', weight: 15, unit: 'reps' },
-            ].map((record) => (
+            {insights.personalRecords.slice(0, 8).map((record) => (
               <div
                 key={record.exercise}
                 className="p-4 bg-slate-900/50 rounded-lg border border-slate-700"
@@ -224,7 +243,9 @@ export function Progress() {
                   <span className="text-sm text-slate-400 ml-1">{record.unit}</span>
                 </p>
                 <Badge className="mt-2 bg-green-500/10 text-green-400 border-green-500/20">
-                  +5% deze maand
+                  {record.changePct !== undefined
+                    ? `${record.changePct >= 0 ? "+" : ""}${record.changePct}% deze periode`
+                    : "PR bijgewerkt"}
                 </Badge>
               </div>
             ))}

@@ -1,11 +1,15 @@
-import { Outlet, Link, useLocation } from "react-router-dom";
-import { Home, Calendar, TrendingUp, Settings, Dumbbell } from "lucide-react";
+import { Outlet, Link, Navigate, useLocation } from "react-router-dom";
+import { Home, Calendar, TrendingUp, Settings, Dumbbell, LogOut } from "lucide-react";
 import { DailyCheckInDialog } from "../dialogs/DailyCheckInDialog";
 import { useState, useEffect } from "react";
+import { Button } from "../ui/button";
+import { useAuth } from "../../providers/AuthProvider";
+import { toast } from "sonner";
 
 export function RootLayout() {
   const location = useLocation();
   const [showCheckIn, setShowCheckIn] = useState(false);
+  const { isAuthenticated, isLoading, email, logout } = useAuth();
 
   useEffect(() => {
     // Check of gebruiker vandaag al heeft ingecheckt
@@ -25,6 +29,28 @@ export function RootLayout() {
     { path: "/settings", icon: Settings, label: "Instellingen" },
   ];
 
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-200 flex items-center justify-center">
+        Inloggen laden...
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <Navigate to="/auth" replace />;
+  }
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+      toast.success("Uitgelogd");
+    } catch (error) {
+      console.error("logout failed", error);
+      toast.error("Uitloggen mislukt");
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
       {/* Header */}
@@ -41,6 +67,18 @@ export function RootLayout() {
                   Wetenschappelijk workout schema
                 </p>
               </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-slate-400 hidden sm:inline">{email}</span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleLogout}
+                className="bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700"
+              >
+                <LogOut className="w-4 h-4 mr-2" />
+                Logout
+              </Button>
             </div>
           </div>
         </div>

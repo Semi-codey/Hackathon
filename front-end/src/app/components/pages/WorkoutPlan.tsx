@@ -6,20 +6,59 @@ import { Button } from "../ui/button";
 import { Calendar as CalendarIcon, Plus, RefreshCw } from "lucide-react";
 import type { WorkoutSession } from "../../types/workout";
 import { api } from "../../lib/mockData";
+import { sinasAgent } from "../../lib/sinasAgent";
+import { toast } from "sonner";
 
 export function WorkoutPlan() {
   const [sessions, setSessions] = useState<WorkoutSession[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showDebug, setShowDebug] = useState(false);
+  const [debugInfo, setDebugInfo] = useState(() => sinasAgent.getLastDebugInfo());
+
+  const refreshDebugInfo = () => {
+    setDebugInfo(sinasAgent.getLastDebugInfo());
+  };
 
   useEffect(() => {
     loadSessions();
   }, []);
 
   const loadSessions = async () => {
-    setLoading(true);
-    const data = await api.getWorkoutSessions();
-    setSessions(data);
-    setLoading(false);
+    try {
+      setLoading(true);
+      const data = await api.getWorkoutSessions();
+      setSessions(data);
+    } catch (error) {
+      console.error("loadSessions failed", error);
+      toast.error("Kon schema niet ophalen van SINAS");
+      setSessions([]);
+    } finally {
+      setLoading(false);
+      refreshDebugInfo();
+    }
+  };
+
+  const handleGeneratePlan = async () => {
+    try {
+      setLoading(true);
+      let goal: "strength" | "hypertrophy" | "endurance" | "crossfit" | "powerlifting" = "strength";
+      try {
+        const profile = await api.getUserProfile();
+        goal = profile.goal;
+      } catch {
+        toast.info("Profiel niet beschikbaar, schema wordt gegenereerd met standaarddoel (strength)");
+      }
+
+      const data = await api.generateWorkoutPlan({ goal });
+      setSessions(data);
+      toast.success("Nieuw schema gegenereerd");
+    } catch (error) {
+      toast.error("Schema genereren mislukt");
+      console.error("handleGeneratePlan failed", error);
+    } finally {
+      setLoading(false);
+      refreshDebugInfo();
+    }
   };
 
   const getDayName = (dateStr: string) => {
@@ -72,14 +111,57 @@ export function WorkoutPlan() {
           Sync Google Kalender
         </Button>
         <Button
-          onClick={loadSessions}
+          onClick={() => setShowDebug((prev) => !prev)}
           variant="outline"
           className="bg-slate-800 border-slate-700 text-white hover:bg-slate-700"
         >
-          <RefreshCw className="w-4 h-4 mr-2" />
-          Genereer nieuw schema
+          {showDebug ? "Verberg SINAS debug" : "Toon SINAS debug"}
+        </Button>
+        <Button
+          onClick={handleGeneratePlan}
+          disabled={loading}
+          variant="outline"
+          className="bg-slate-800 border-slate-700 text-white hover:bg-slate-700"
+        >
+          <RefreshCw className={`w-4 h-4 mr-2 ${loading ? "animate-spin" : ""}`} />
+          {loading ? "Genereren..." : "Genereer nieuw schema"}
         </Button>
       </div>
+
+      {showDebug && (
+        <Card className="bg-slate-900/80 border-slate-700">
+          <CardHeader>
+            <CardTitle className="text-white text-base">SINAS debug</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex gap-2">
+              <Button
+                onClick={refreshDebugInfo}
+                variant="outline"
+                className="bg-slate-800 border-slate-700 text-white hover:bg-slate-700"
+              >
+                Refresh debug
+              </Button>
+              <Button
+                onClick={() => {
+                  navigator.clipboard
+                    .writeText(JSON.stringify(debugInfo, null, 2))
+                    .then(() => toast.success("Debug gekopieerd"))
+                    .catch(() => toast.error("Kon debug niet kopiëren"));
+                }}
+                variant="outline"
+                className="bg-slate-800 border-slate-700 text-white hover:bg-slate-700"
+              >
+                Copy JSON
+              </Button>
+            </div>
+
+            <pre className="text-xs text-slate-300 bg-slate-950 border border-slate-800 rounded-lg p-3 overflow-auto max-h-72">
+              {JSON.stringify(debugInfo, null, 2)}
+            </pre>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Info card */}
       <Card className="bg-blue-900/20 border-blue-700/50">
@@ -104,6 +186,14 @@ export function WorkoutPlan() {
 
       {/* Workout sessions */}
       <div className="space-y-4">
+        {!loading && sessions.length === 0 && (
+          <Card className="bg-slate-800/50 border-slate-700">
+            <CardContent className="p-6 text-slate-400 text-sm">
+              Geen schema gevonden. Klik op "Genereer nieuw schema".
+            </CardContent>
+          </Card>
+        )}
+
         {sessions.map((session) => {
           const isToday =
             session.date === new Date().toISOString().split("T")[0];
@@ -153,29 +243,35 @@ export function WorkoutPlan() {
               <CardContent className="space-y-3">
                 {/* Exercise list */}
                 <div className="space-y-2">
-                  {session.exercises.map((ex) => (
-                    <div
-                      key={ex.id}
-                      className="flex items-center justify-between p-3 bg-slate-900/50 rounded-lg"
-                    >
-                      <div className="flex-1">
-                        <p className="text-white font-medium text-sm">
-                          {ex.exercise.name}
-                        </p>
-                        <p className="text-xs text-slate-400">
-                          {ex.sets.length} sets • {ex.restTime}s rust
-                        </p>
+                  {session.exercises.map((ex) => {
+                    const firstSet = ex.sets[0];
+                    const weight = firstSet?.weight ?? 0;
+                    const reps = firstSet?.reps ?? "-";
+
+                    return (
+                      <div
+                        key={ex.id}
+                        className="flex items-center justify-between p-3 bg-slate-900/50 rounded-lg"
+                      >
+                        <div className="flex-1">
+                          <p className="text-white font-medium text-sm">
+                            {ex.exercise.name}
+                          </p>
+                          <p className="text-xs text-slate-400">
+                            {ex.sets.length} sets • {ex.restTime}s rust
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sm text-white font-medium">
+                            {weight}kg
+                          </p>
+                          <p className="text-xs text-slate-400">
+                            {reps} reps
+                          </p>
+                        </div>
                       </div>
-                      <div className="text-right">
-                        <p className="text-sm text-white font-medium">
-                          {ex.sets[0].weight}kg
-                        </p>
-                        <p className="text-xs text-slate-400">
-                          {ex.sets[0].reps} reps
-                        </p>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
 
                 {/* Stats */}

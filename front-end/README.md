@@ -1,5 +1,66 @@
 # React + TypeScript + Vite
 
+## SINAS agent integration
+
+This frontend is wired to use SINAS as the primary backend for:
+
+- workout schedule / sessions
+- exercise sets updates during training
+- user profile + goal updates
+- daily check-ins
+- fitness app sync triggers
+
+### 1) Configure environment
+
+Create a `.env` file in this folder (`front-end`) with:
+
+```bash
+VITE_SINAS_BASE_URL=https://via-5.sinas.wearebrain.com
+VITE_SINAS_API_KEY=your-key
+# Optional: if your SINAS gateway needs a specific path
+VITE_SINAS_ENDPOINT=
+# Optional: user id sent with each request
+VITE_SINAS_USER_ID=demo-user
+VITE_SINAS_AGENT_NAMESPACE=gym-trainer
+VITE_SINAS_AGENT_NAME=Personal_Trainer
+```
+
+### 2) Run the app
+
+```bash
+pnpm install
+pnpm dev
+```
+
+### 3) How requests are sent
+
+The app sends agent tasks from [src/app/lib/sinasAgent.ts](src/app/lib/sinasAgent.ts), for example:
+
+- `get_workout_sessions`
+- `generate_workout_plan`
+- `update_workout_set`
+- `get_user_profile`
+- `update_user_profile`
+- `submit_daily_check_in`
+- `get_daily_check_ins`
+- `sync_fitness_app`
+
+If no explicit endpoint is set, the client tries these paths in order:
+
+1. `${VITE_SINAS_BASE_URL}/${VITE_SINAS_ENDPOINT}` (if configured)
+2. `${VITE_SINAS_BASE_URL}/agent/run`
+3. `${VITE_SINAS_BASE_URL}/run`
+4. `${VITE_SINAS_BASE_URL}`
+
+The app now requires SINAS for runtime data (no mock fallback).
+
+### 4) Account flow
+
+- Accounts are app-local (email + password), like a normal app account.
+- On login, the app binds a stable app `userId` to SINAS requests.
+- This `userId` is used for workouts, check-ins, progress, and profile data.
+- Current Google login button is UI-only and not wired to backend OAuth yet.
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:

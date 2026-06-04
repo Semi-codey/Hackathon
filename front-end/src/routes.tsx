@@ -6,8 +6,13 @@ import { WorkoutSession } from "./app/components/pages/WorkoutSession";
 import { Progress } from "./app/components/pages/Progress";
 import { Settings } from "./app/components/pages/Settings";
 import OAuthCallback from "./app/components/pages/OAuthCallback";
+import { Auth } from "./app/components/pages/Auth";
 
 export const router = createBrowserRouter([
+  {
+    path: "/auth",
+    Component: Auth,
+  },
   {
     path: "/",
     Component: RootLayout,

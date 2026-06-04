@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../ui/card';
 import { Button } from '../ui/button';
 import { Label } from '../ui/label';
@@ -6,14 +6,32 @@ import { Switch } from '../ui/switch';
 import { Badge } from '../ui/badge';
 import { Calendar, Smartphone, Target, Bell, ExternalLink } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
+import { Input } from '../ui/input';
 import { api } from '../../lib/mockData';
 import { toast } from 'sonner';
+import { useAuth } from '../../providers/AuthProvider';
 
 export function Settings() {
   const [googleCalendar, setGoogleCalendar] = useState(false);
   const [autoSchedule, setAutoSchedule] = useState(true);
   const [goal, setGoal] = useState('strength');
   const [notifications, setNotifications] = useState(true);
+  const { email, userId } = useAuth();
+
+  useEffect(() => {
+    const loadProfile = async () => {
+      try {
+        const profile = await api.getUserProfile();
+        setGoal(profile.goal);
+        setAutoSchedule(Boolean(profile.preferences.preferredTime));
+      } catch (error) {
+        console.error("loadProfile failed", error);
+        toast.error('Kon profiel niet ophalen van SINAS');
+      }
+    };
+
+    loadProfile();
+  }, []);
 
   const [integrations, setIntegrations] = useState([
     { name: 'Strava', enabled: false, logo: '🏃' },
@@ -23,9 +41,14 @@ export function Settings() {
   ]);
 
   const handleGoogleCalendarSync = async () => {
-    await api.syncWithGoogleCalendar();
-    setGoogleCalendar(true);
-    toast.success('Google Kalender gekoppeld!');
+    try {
+      await api.syncWithGoogleCalendar();
+      setGoogleCalendar(true);
+      toast.success('Google Kalender gekoppeld!');
+    } catch (error) {
+      console.error("handleGoogleCalendarSync failed", error);
+      toast.error('Google Kalender koppelen mislukt');
+    }
   };
 
   const handleToggleIntegration = async (index: number) => {
@@ -34,10 +57,32 @@ export function Settings() {
     setIntegrations(updated);
 
     if (updated[index].enabled) {
-      await api.syncWithFitnessApps(updated[index].name);
-      toast.success(`${updated[index].name} gekoppeld!`);
+      try {
+        await api.syncWithFitnessApps(updated[index].name);
+        toast.success(`${updated[index].name} gekoppeld!`);
+      } catch (error) {
+        console.error("handleToggleIntegration failed", error);
+        updated[index].enabled = false;
+        setIntegrations(updated);
+        toast.error(`${updated[index].name} koppelen mislukt`);
+      }
     } else {
       toast.success(`${updated[index].name} ontkoppeld`);
+    }
+  };
+
+  const handleSaveSettings = async () => {
+    try {
+      await api.updateUserProfile({
+        goal: goal as 'strength' | 'hypertrophy' | 'endurance' | 'crossfit' | 'powerlifting',
+        preferences: {
+          preferredTime: autoSchedule ? '18:00' : undefined,
+        },
+      });
+      toast.success('Instellingen opgeslagen en gekoppeld aan account');
+    } catch (error) {
+      console.error("handleSaveSettings failed", error);
+      toast.error('Opslaan mislukt (SINAS niet bereikbaar)');
     }
   };
 
@@ -52,6 +97,37 @@ export function Settings() {
           Personaliseer je trainingsschema en integraties
         </p>
       </div>
+
+      {/* Training goal */}
+      <Card className="bg-slate-800/50 border-slate-700">
+        <CardHeader>
+          <CardTitle className="text-white">Account koppeling</CardTitle>
+          <CardDescription className="text-slate-400">
+            Dit is je app-account dat gebruikt wordt voor alle data in SINAS
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="space-y-2">
+            <Label className="text-white">E-mail</Label>
+            <Input
+              value={email}
+              readOnly
+              className="bg-slate-900 border-slate-700 text-white"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-white">App user id</Label>
+            <Input
+              value={userId}
+              readOnly
+              className="bg-slate-900 border-slate-700 text-white"
+            />
+          </div>
+          <p className="text-xs text-slate-400">
+            Deze user id wordt automatisch gebruikt voor schema-, check-in- en voortgang requests.
+          </p>
+        </CardContent>
+      </Card>
 
       {/* Training goal */}
       <Card className="bg-slate-800/50 border-slate-700">
@@ -212,7 +288,10 @@ export function Settings() {
       </Card>
 
       {/* Save button */}
-      <Button className="w-full bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white h-12">
+      <Button
+        onClick={handleSaveSettings}
+        className="w-full bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white h-12"
+      >
         Instellingen opslaan
       </Button>
     </div>

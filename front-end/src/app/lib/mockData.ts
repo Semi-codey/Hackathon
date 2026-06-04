@@ -1,10 +1,12 @@
 import type {
   Exercise,
+  ProgressInsights,
   WorkoutSession,
   UserProfile,
   DailyCheckIn,
 } from "../types/workout";
 import googleCalendar from "./googleCalendar";
+import { sinasAgent } from "./sinasAgent";
 
 // Mock exercises database
 export const exercises: Exercise[] = [
@@ -139,50 +141,198 @@ export const mockDailyCheckIns: DailyCheckIn[] = [
 ];
 
 // Mock API functies voor backend integratie
+let cachedSessions: WorkoutSession[] = [];
+let cachedProfile: UserProfile = {
+  id: "",
+  name: "",
+  goal: "strength",
+  experienceLevel: "beginner",
+  availableDays: [],
+  preferences: {},
+};
+let cachedCheckIns: DailyCheckIn[] = [];
+let cachedProgressInsights: ProgressInsights = {
+  strengthData: [],
+  volumeData: [],
+  sleepData: [],
+  achievements: [],
+  personalRecords: [],
+  sleepInsight: undefined,
+};
+
+function ensureSinasConfigured() {
+  if (!sinasAgent.isConfigured()) {
+    throw new Error("SINAS is not configured. Set VITE_SINAS_BASE_URL and VITE_SINAS_API_KEY.");
+  }
+}
+
+function sessionSignature(sessions: WorkoutSession[]) {
+  return JSON.stringify(
+    sessions.map((session) => ({
+      date: session.date,
+      name: session.name,
+      exercises: session.exercises.map((exercise) => ({
+        name: exercise.exercise.name,
+        sets: exercise.sets.map((set) => ({ reps: set.reps, weight: set.weight })),
+      })),
+    })),
+  );
+}
+
 export const api = {
   // Workout sessions
   getWorkoutSessions: async (): Promise<WorkoutSession[]> => {
-    // TODO: Vervang met echte API call
-    return Promise.resolve(mockWorkoutSessions);
+    ensureSinasConfigured();
+    try {
+      const sessions = await sinasAgent.getWorkoutSessions();
+      cachedSessions = sessions;
+      return cachedSessions;
+    } catch (error) {
+      console.warn("SINAS getWorkoutSessions failed", error);
+      throw error;
+    }
+  },
+
+  generateWorkoutPlan: async (options?: { goal?: UserProfile["goal"] }): Promise<WorkoutSession[]> => {
+    ensureSinasConfigured();
+    const desiredGoal = options?.goal ?? cachedProfile.goal;
+    const previousSignature = sessionSignature(cachedSessions);
+
+    try {
+      const sessions = await sinasAgent.generateWorkoutPlan({
+        goal: desiredGoal,
+        requestId: `regen-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      });
+      if (!sessions.length) {
+        throw new Error("SINAS returned no sessions for generated plan");
+      }
+
+      const incomingSignature = sessionSignature(sessions);
+      if (incomingSignature === previousSignature) {
+        console.warn("SINAS returned unchanged schedule on regeneration request");
+      }
+      cachedSessions = sessions;
+      return cachedSessions;
+    } catch (error) {
+      console.warn("SINAS generateWorkoutPlan failed", error);
+      throw error;
+    }
   },
 
   updateWorkoutSet: async (
     sessionId: string,
     exerciseId: string,
     setId: string,
-    data: Partial<(typeof mockWorkoutSessions)[0]["exercises"][0]["sets"][0]>,
+    data: Partial<WorkoutSession["exercises"][number]["sets"][number]>,
   ) => {
-    // TODO: Vervang met echte API call
-    return Promise.resolve({ success: true, data });
+    ensureSinasConfigured();
+    cachedSessions = cachedSessions.map((session) => {
+      if (session.id !== sessionId) return session;
+      return {
+        ...session,
+        exercises: session.exercises.map((exercise) => {
+          if (exercise.id !== exerciseId) return exercise;
+          return {
+            ...exercise,
+            sets: exercise.sets.map((set) =>
+              set.id === setId
+                ? {
+                    ...set,
+                    ...data,
+                  }
+                : set,
+            ),
+          };
+        }),
+      };
+    });
+
+    try {
+      return await sinasAgent.updateWorkoutSet(sessionId, exerciseId, setId, data);
+    } catch (error) {
+      console.warn("SINAS updateWorkoutSet failed", error);
+      throw error;
+    }
   },
 
   // User profile
   getUserProfile: async (): Promise<UserProfile> => {
-    // TODO: Vervang met echte API call
-    return Promise.resolve(mockUserProfile);
+    ensureSinasConfigured();
+    try {
+      const profile = await sinasAgent.getUserProfile();
+      if (!profile) throw new Error("SINAS returned empty profile");
+      cachedProfile = profile;
+      return profile;
+    } catch (error) {
+      console.warn("SINAS getUserProfile failed", error);
+      throw error;
+    }
   },
 
   updateUserProfile: async (data: Partial<UserProfile>) => {
-    // TODO: Vervang met echte API call
-    return Promise.resolve({ success: true, data });
+    ensureSinasConfigured();
+    cachedProfile = {
+      ...cachedProfile,
+      ...data,
+      preferences: {
+        ...cachedProfile.preferences,
+        ...(data.preferences ?? {}),
+      },
+    };
+
+    try {
+      return await sinasAgent.updateUserProfile(data);
+    } catch (error) {
+      console.warn("SINAS updateUserProfile failed", error);
+      throw error;
+    }
   },
 
   // Daily check-in
   submitDailyCheckIn: async (checkIn: DailyCheckIn) => {
-    // TODO: Vervang met echte API call
-    return Promise.resolve({ success: true, data: checkIn });
+    ensureSinasConfigured();
+    cachedCheckIns = [checkIn, ...cachedCheckIns.filter((item) => item.date !== checkIn.date)];
+
+    try {
+      return await sinasAgent.submitDailyCheckIn(checkIn);
+    } catch (error) {
+      console.warn("SINAS submitDailyCheckIn failed", error);
+      throw error;
+    }
   },
 
   getDailyCheckIns: async (days: number = 30): Promise<DailyCheckIn[]> => {
-    // TODO: Vervang met echte API call
-    return Promise.resolve(mockDailyCheckIns);
+    ensureSinasConfigured();
+    try {
+      const checkIns = await sinasAgent.getDailyCheckIns(days);
+      cachedCheckIns = checkIns;
+      return checkIns;
+    } catch (error) {
+      console.warn("SINAS getDailyCheckIns failed", error);
+      throw error;
+    }
+  },
+
+  getProgressInsights: async (): Promise<ProgressInsights> => {
+    ensureSinasConfigured();
+    try {
+      const insights = await sinasAgent.getProgressInsights();
+      cachedProgressInsights = insights;
+      return insights;
+    } catch (error) {
+      console.warn("SINAS getProgressInsights failed", error);
+      throw error;
+    }
   },
 
   // Calendar integration
   syncWithGoogleCalendar: async () => {
+    ensureSinasConfigured();
     try {
-      const res =
-        await googleCalendar.insertSessionsAsEvents(mockWorkoutSessions);
+      if (!cachedSessions.length) {
+        cachedSessions = await sinasAgent.getWorkoutSessions();
+      }
+      const res = await googleCalendar.insertSessionsAsEvents(cachedSessions);
       return res;
     } catch (err) {
       console.error("syncWithGoogleCalendar failed", err);
@@ -192,7 +342,12 @@ export const api = {
 
   // External app integration
   syncWithFitnessApps: async (appName: string) => {
-    // TODO: Implementeer app-specifieke sync
-    return Promise.resolve({ success: true });
+    ensureSinasConfigured();
+    try {
+      return await sinasAgent.syncWithFitnessApps(appName);
+    } catch (error) {
+      console.warn("SINAS syncWithFitnessApps failed", error);
+      throw error;
+    }
   },
 };

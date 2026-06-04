@@ -81,3 +81,42 @@ export interface AppIntegration {
   enabled: boolean;
   syncData: string[];
 }
+
+export interface StrengthPoint {
+  week: string;
+  squat: number;
+  bench: number;
+  deadlift: number;
+}
+
+export interface VolumePoint {
+  day: string;
+  volume: number;
+}
+
+export interface SleepPoint {
+  date: string;
+  hours: number;
+}
+
+export interface ProgressAchievement {
+  title: string;
+  description: string;
+  color?: "yellow" | "blue" | "green";
+}
+
+export interface PersonalRecord {
+  exercise: string;
+  weight: number;
+  unit: string;
+  changePct?: number;
+}
+
+export interface ProgressInsights {
+  strengthData: StrengthPoint[];
+  volumeData: VolumePoint[];
+  sleepData: SleepPoint[];
+  achievements: ProgressAchievement[];
+  personalRecords: PersonalRecord[];
+  sleepInsight?: string;
+}
