@@ -99,14 +99,23 @@ export function Progress() {
 
       {/* Charts */}
       <Tabs defaultValue="strength" className="space-y-4">
-        <TabsList className="bg-slate-800 border border-slate-700">
-          <TabsTrigger value="strength" className="data-[state=active]:bg-slate-700">
+        <TabsList className="bg-slate-900 border border-slate-700 p-1 h-auto gap-1">
+          <TabsTrigger
+            value="strength"
+            className="text-slate-200 data-[state=active]:bg-blue-600 data-[state=active]:text-white hover:text-white"
+          >
             Kracht progressie
           </TabsTrigger>
-          <TabsTrigger value="volume" className="data-[state=active]:bg-slate-700">
+          <TabsTrigger
+            value="volume"
+            className="text-slate-200 data-[state=active]:bg-blue-600 data-[state=active]:text-white hover:text-white"
+          >
             Training volume
           </TabsTrigger>
-          <TabsTrigger value="sleep" className="data-[state=active]:bg-slate-700">
+          <TabsTrigger
+            value="sleep"
+            className="text-slate-200 data-[state=active]:bg-blue-600 data-[state=active]:text-white hover:text-white"
+          >
             Slaap tracking
           </TabsTrigger>
         </TabsList>
